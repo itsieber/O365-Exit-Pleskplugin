@@ -1,0 +1,19 @@
+<?php echo $this->renderTabs($this->tabs); ?>
+
+<h2>Job-Log #<?php echo (int)$this->jobId; ?></h2>
+
+<p>
+    <a href="<?php echo pm_Context::getActionUrl('index', 'jobs'); ?>" class="btn">&larr; Zurück</a>
+    &nbsp;
+    <button onclick="location.reload()" class="btn">&#8635; Aktualisieren</button>
+</p>
+
+<pre style="background:#1e1e1e;color:#d4d4d4;padding:16px;border-radius:4px;overflow:auto;max-height:600px;font-size:12px;line-height:1.5"><?php echo htmlspecialchars($this->logText); ?></pre>
+
+<script>
+// Automatisch ans Ende scrollen
+document.addEventListener('DOMContentLoaded', function() {
+    var pre = document.querySelector('pre');
+    if (pre) { pre.scrollTop = pre.scrollHeight; }
+});
+</script>

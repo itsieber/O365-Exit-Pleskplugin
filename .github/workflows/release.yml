@@ -1,0 +1,40 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'V*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read version
+        id: version
+        run: |
+          VERSION=$(jq -r '.version' version.json)
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Build ZIP
+        run: |
+          zip -r o365-exit-migrator.zip \
+            meta.xml \
+            version.json \
+            _meta/ \
+            htdocs/ \
+            plib/ \
+            -x "*.DS_Store"
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ steps.version.outputs.version }}
+          body: |
+            ## ${{ steps.version.outputs.version }}
+          files: o365-exit-migrator.zip

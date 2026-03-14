@@ -1,0 +1,57 @@
+<?php echo $this->renderTabs($this->tabs); ?>
+
+<h2>Postfächer: <?php echo htmlspecialchars($this->domain->getName()); ?></h2>
+
+<?php if (empty($this->o365mailboxes)): ?>
+    <p style="color:#c00">Keine O365-Postfächer gefunden. Bitte prüfen Sie die Azure AD Berechtigungen (User.Read.All).</p>
+<?php else: ?>
+    <p><?php echo count($this->o365mailboxes); ?> O365-Postfächer gefunden. Wählen Sie das Ziel-Postfach und starten Sie die Migration.</p>
+
+    <table class="list" style="width:100%">
+        <thead>
+            <tr>
+                <th>O365 Postfach</th>
+                <th>Name</th>
+                <th>Plesk Ziel-Postfach</th>
+                <th>Ab Datum</th>
+                <th>Aktion</th>
+            </tr>
+        </thead>
+        <tbody>
+        <?php foreach ($this->o365mailboxes as $mb): ?>
+            <tr>
+                <form method="post" action="<?php echo $this->migrateUrl; ?>">
+                    <input type="hidden" name="domain_id"  value="<?php echo htmlspecialchars($this->domainId); ?>">
+                    <input type="hidden" name="o365_email" value="<?php echo htmlspecialchars($mb['email']); ?>">
+                    <td><?php echo htmlspecialchars($mb['email']); ?></td>
+                    <td><?php echo htmlspecialchars($mb['display_name']); ?></td>
+                    <td>
+                        <select name="plesk_email" style="min-width:200px">
+                            <option value="">-- Postfach wählen --</option>
+                            <?php foreach ($this->localMailboxes as $addr => $label): ?>
+                                <?php
+                                $selected = (strtolower($addr) === strtolower($mb['email'])) ? 'selected' : '';
+                                ?>
+                                <option value="<?php echo htmlspecialchars($addr); ?>" <?php echo $selected; ?>>
+                                    <?php echo htmlspecialchars($label); ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </td>
+                    <td>
+                        <input type="date" name="date_from" placeholder="optional"
+                               style="width:130px"
+                               title="Nur Mails ab diesem Datum migrieren (leer = alles)">
+                    </td>
+                    <td>
+                        <button type="submit" class="btn btn-primary"
+                                onclick="return confirm('Migration starten für <?php echo htmlspecialchars($mb['email']); ?>?')">
+                            Migrieren
+                        </button>
+                    </td>
+                </form>
+            </tr>
+        <?php endforeach; ?>
+        </tbody>
+    </table>
+<?php endif; ?>

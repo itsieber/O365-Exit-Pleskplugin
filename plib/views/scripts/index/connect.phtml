@@ -1,0 +1,41 @@
+<?php echo $this->renderTabs($this->tabs); ?>
+
+<h2>O365 verknüpfen: <?php echo htmlspecialchars($this->domain->getName()); ?></h2>
+
+<div style="background:#f0f4ff;border:1px solid #c0d0f0;border-radius:4px;padding:16px;margin-bottom:20px">
+    <h3 style="margin-top:0">&#9432; Azure AD App einrichten (einmalig)</h3>
+    <ol>
+        <li>
+            <a href="https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/CreateApplicationBlade" target="_blank">
+                App-Registrierung erstellen
+            </a>
+            &rarr; Name: <code>Plesk Mail Migrator</code>, Typ: <em>Nur dieser Mandant</em>
+        </li>
+        <li>
+            <strong>API-Berechtigungen</strong> &rarr; Berechtigung hinzufügen &rarr;
+            <em>Office 365 Exchange Online</em> &rarr; Anwendungsberechtigungen &rarr;
+            <strong>IMAP.AccessAsApp</strong> &rarr; Admin-Zustimmung erteilen
+        </li>
+        <li>
+            <strong>Für User.Read.All</strong> (Postfächer auflisten): APIs &rarr;
+            <em>Microsoft Graph</em> &rarr; Anwendungsberechtigungen &rarr;
+            <strong>User.Read.All</strong> &rarr; Admin-Zustimmung erteilen
+        </li>
+        <li>
+            <strong>Exchange Online PowerShell</strong> (einmalig pro Postfach):
+            <pre style="background:#fff;padding:8px;margin:4px 0;font-size:12px">New-ServicePrincipal -AppId &lt;client-id&gt; -ServiceId &lt;object-id&gt;
+Add-MailboxPermission -Identity user@domain.com -User &lt;service-principal-id&gt; -AccessRights FullAccess</pre>
+        </li>
+        <li>
+            <a href="https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade" target="_blank">
+                App-Übersicht
+            </a>:
+            <strong>Anwendungs-ID</strong> und <strong>Verzeichnis-ID (Tenant)</strong> kopieren
+        </li>
+        <li>
+            <strong>Zertifikate &amp; Geheimnisse</strong> &rarr; Neues Client-Geheimnis erstellen und kopieren
+        </li>
+    </ol>
+</div>
+
+<?php echo $this->form; ?>

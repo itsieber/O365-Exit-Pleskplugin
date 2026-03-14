@@ -1,0 +1,29 @@
+<?php echo $this->renderTabs($this->tabs); ?>
+
+<h2>Update</h2>
+
+<p>Aktuelle Version: <strong><?php echo htmlspecialchars($this->currentVersion); ?></strong></p>
+
+<?php if (isset($this->updateInfo['error'])): ?>
+    <p style="color:#c00"><?php echo htmlspecialchars($this->updateInfo['error']); ?></p>
+
+<?php elseif ($this->updateInfo['available']): ?>
+    <div style="background:#f0fff4;border:1px solid #68d391;border-radius:4px;padding:16px;margin-bottom:16px">
+        <strong>Neue Version verfügbar: <?php echo htmlspecialchars($this->updateInfo['latest']); ?></strong>
+        <?php if (!empty($this->updateInfo['date'])): ?>
+            <small style="color:#666"> – <?php echo date('d.m.Y', strtotime($this->updateInfo['date'])); ?></small>
+        <?php endif; ?>
+        <?php if (!empty($this->updateInfo['changelog'])): ?>
+            <pre style="margin-top:8px;font-size:12px"><?php echo htmlspecialchars($this->updateInfo['changelog']); ?></pre>
+        <?php endif; ?>
+    </div>
+    <form method="post">
+        <button type="submit" class="btn btn-primary"
+                onclick="return confirm('Update auf <?php echo htmlspecialchars($this->updateInfo['latest']); ?> installieren?')">
+            Jetzt aktualisieren
+        </button>
+    </form>
+
+<?php else: ?>
+    <p style="color:green">&#10003; Sie verwenden die aktuelle Version.</p>
+<?php endif; ?>

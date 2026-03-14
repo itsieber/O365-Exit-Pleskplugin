@@ -1,0 +1,17 @@
+<?php echo $this->renderTabs($this->tabs); ?>
+
+<h2>Migrationsjobs</h2>
+
+<?php if (empty($this->list->getData())): ?>
+    <p style="color:#888">Noch keine Migrationsjobs gestartet.</p>
+<?php else: ?>
+    <?php echo $this->renderList($this->list); ?>
+<?php endif; ?>
+
+<p style="margin-top:16px">
+    <a href="<?php echo pm_Context::getActionUrl('index', 'domains'); ?>" class="btn">
+        &larr; Neue Migration starten
+    </a>
+    &nbsp;
+    <button onclick="location.reload()" class="btn">&#8635; Aktualisieren</button>
+</p>
