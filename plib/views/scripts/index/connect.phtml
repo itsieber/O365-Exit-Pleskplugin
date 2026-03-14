@@ -2,40 +2,31 @@
 
 <h2>O365 verknüpfen: <?php echo htmlspecialchars($this->domain->getName()); ?></h2>
 
-<div style="background:#f0f4ff;border:1px solid #c0d0f0;border-radius:4px;padding:16px;margin-bottom:20px">
-    <h3 style="margin-top:0">&#9432; Azure AD App einrichten (einmalig)</h3>
-    <ol>
-        <li>
-            <a href="https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/CreateApplicationBlade" target="_blank">
-                App-Registrierung erstellen
-            </a>
-            &rarr; Name: <code>Plesk Mail Migrator</code>, Typ: <em>Nur dieser Mandant</em>
-        </li>
-        <li>
-            <strong>API-Berechtigungen</strong> &rarr; Berechtigung hinzufügen &rarr;
-            <em>Office 365 Exchange Online</em> &rarr; Anwendungsberechtigungen &rarr;
-            <strong>IMAP.AccessAsApp</strong> &rarr; Admin-Zustimmung erteilen
-        </li>
-        <li>
-            <strong>Für User.Read.All</strong> (Postfächer auflisten): APIs &rarr;
-            <em>Microsoft Graph</em> &rarr; Anwendungsberechtigungen &rarr;
-            <strong>User.Read.All</strong> &rarr; Admin-Zustimmung erteilen
-        </li>
-        <li>
-            <strong>Exchange Online PowerShell</strong> (einmalig pro Postfach):
-            <pre style="background:#fff;padding:8px;margin:4px 0;font-size:12px">New-ServicePrincipal -AppId &lt;client-id&gt; -ServiceId &lt;object-id&gt;
-Add-MailboxPermission -Identity user@domain.com -User &lt;service-principal-id&gt; -AccessRights FullAccess</pre>
-        </li>
-        <li>
-            <a href="https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade" target="_blank">
-                App-Übersicht
-            </a>:
-            <strong>Anwendungs-ID</strong> und <strong>Verzeichnis-ID (Tenant)</strong> kopieren
-        </li>
-        <li>
-            <strong>Zertifikate &amp; Geheimnisse</strong> &rarr; Neues Client-Geheimnis erstellen und kopieren
-        </li>
-    </ol>
-</div>
+<?php if (!$this->globalReady): ?>
+    <div style="background:#fff3cd;border:1px solid #ffc107;border-radius:6px;padding:16px">
+        &#9888; Bitte zuerst die globale Azure App Client ID in den
+        <a href="<?php echo pm_Context::getActionUrl('index', 'settings'); ?>">Einstellungen</a> hinterlegen.
+    </div>
 
-<?php echo $this->form; ?>
+<?php elseif (!empty($this->tenantId)): ?>
+    <div style="background:#f0fff4;border:1px solid #68d391;border-radius:6px;padding:16px;margin-bottom:20px">
+        &#10003; <strong>Verbunden</strong> &mdash; Tenant ID: <code><?php echo htmlspecialchars($this->tenantId); ?></code>
+    </div>
+    <a href="<?php echo htmlspecialchars($this->oauthStartUrl); ?>" class="btn">
+        Berechtigungen erneuern
+    </a>
+    &nbsp;
+    <a href="<?php echo pm_Context::getActionUrl('index', 'mailboxes') . '?domain_id=' . $this->domainId; ?>" class="btn btn-primary">
+        Postfächer anzeigen &rarr;
+    </a>
+
+<?php else: ?>
+    <p>Klicken Sie auf den Button und melden Sie sich als O365-Administrator an.<br>
+    Alle benötigten Berechtigungen werden automatisch angefragt.</p>
+    <a href="<?php echo htmlspecialchars($this->oauthStartUrl); ?>"
+       class="btn btn-primary"
+       style="display:inline-flex;align-items:center;gap:8px">
+        <img src="https://learn.microsoft.com/favicon.ico" width="16" height="16" alt="">
+        Mit Microsoft verbinden
+    </a>
+<?php endif; ?>

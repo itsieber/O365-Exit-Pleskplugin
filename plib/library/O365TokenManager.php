@@ -4,12 +4,11 @@
  * Holt OAuth2 Access Tokens von Azure AD via Client Credentials Flow.
  *
  * Voraussetzung Azure AD:
- *  1. App-Registrierung anlegen
- *  2. API-Berechtigung: Office 365 Exchange Online → IMAP.AccessAsApp (Application)
+ *  1. App-Registrierung anlegen (Multi-Tenant)
+ *  2. API-Berechtigungen: Microsoft Graph → User.Read.All + Mail.Read (Application)
  *  3. Admin-Consent erteilen
- *  4. Exchange Online PowerShell:
- *       New-ServicePrincipal -AppId <client-id> -ServiceId <object-id>
- *       Add-MailboxPermission -Identity user@domain.com -User <service-principal-id> -AccessRights FullAccess
+ *
+ * Scope: https://graph.microsoft.com/.default
  */
 class Modules_O365ExitMigrator_O365TokenManager
 {
@@ -25,11 +24,11 @@ class Modules_O365ExitMigrator_O365TokenManager
     {
         $this->domainId     = $domainId;
         $this->tenantId     = pm_Settings::get('domain_tenant_' . $domainId, '');
-        $this->clientId     = pm_Settings::get('domain_client_' . $domainId, '');
-        $this->clientSecret = pm_Settings::get('domain_secret_' . $domainId, '');
+        $this->clientId     = pm_Settings::get('global_client_id', '');
+        $this->clientSecret = pm_Settings::get('global_client_secret', '');
 
         if (empty($this->tenantId) || empty($this->clientId) || empty($this->clientSecret)) {
-            throw new Exception('O365-Zugangsdaten für diese Domain nicht konfiguriert.');
+            throw new Exception('O365 nicht verbunden. Bitte "Mit Microsoft verbinden" klicken.');
         }
     }
 
@@ -69,7 +68,7 @@ class Modules_O365ExitMigrator_O365TokenManager
             'grant_type'    => 'client_credentials',
             'client_id'     => $this->clientId,
             'client_secret' => $this->clientSecret,
-            'scope'         => 'https://outlook.office365.com/.default',
+            'scope'         => 'https://graph.microsoft.com/.default',
         ]);
 
         $ch = curl_init($url);

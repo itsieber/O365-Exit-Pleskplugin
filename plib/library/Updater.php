@@ -2,7 +2,7 @@
 
 class Modules_O365ExitMigrator_Updater
 {
-    private const GITHUB_REPO = 'itsieber/O365-Exit-Pleskplugin';
+    private const GITHUB_REPO = 'itsieber/O365-Exit-Pleskplugin'; // github.com/itsieber/O365-Exit-Pleskplugin
     private const GITHUB_API  = 'https://api.github.com/repos/';
 
     public function checkForUpdate(): array

@@ -2,7 +2,7 @@
 
 <h2>Migrationsjobs</h2>
 
-<?php if (empty($this->list->getData())): ?>
+<?php if ($this->jobCount === 0): ?>
     <p style="color:#888">Noch keine Migrationsjobs gestartet.</p>
 <?php else: ?>
     <?php echo $this->renderList($this->list); ?>

@@ -51,11 +51,10 @@ class Modules_O365ExitMigrator_GraphApiClient
 
     private function _fetchGraphToken(): string
     {
-        // Neuer Token mit graph.microsoft.com scope
         $domainId     = $this->tokenManager->getDomainId();
         $tenantId     = pm_Settings::get('domain_tenant_' . $domainId, '');
-        $clientId     = pm_Settings::get('domain_client_' . $domainId, '');
-        $clientSecret = pm_Settings::get('domain_secret_' . $domainId, '');
+        $clientId     = pm_Settings::get('global_client_id', '');
+        $clientSecret = pm_Settings::get('global_client_secret', '');
 
         $url = 'https://login.microsoftonline.com/' . urlencode($tenantId) . '/oauth2/v2.0/token';
 

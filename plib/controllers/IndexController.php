@@ -13,14 +13,29 @@ class IndexController extends pm_Controller_Action
         $this->_forward('domains');
     }
 
+    // ─── Sicherheit: Domain-Zugriff prüfen ───────────────────────────────────
+
+    private function _getAccessibleDomains()
+    {
+        $domId = $this->getRequest()->getParam('dom_id', '');
+
+        if (!empty($domId)) {
+            return [pm_Domain::getByDomainId($domId)];
+        }
+
+        return pm_Domain::getAllDomains();
+    }
+
     // ─── Tab: Domains ────────────────────────────────────────────────────────
 
     public function domainsAction()
     {
         $this->view->tabs = $this->_getTabs('domains');
 
+        $domains = $this->_getAccessibleDomains();
+
         $rows = [];
-        foreach (pm_Domain::getAllDomains() as $domain) {
+        foreach ($domains as $domain) {
             $id        = $domain->getId();
             $name      = $domain->getName();
             $tenantId  = pm_Settings::get('domain_tenant_' . $id, '');
@@ -62,60 +77,211 @@ class IndexController extends pm_Controller_Action
     {
         $this->view->tabs = $this->_getTabs('domains');
 
-        $domainId   = $this->getRequest()->getParam('domain_id');
-        $domain     = pm_Domain::getByDomainId($domainId);
-        $this->view->domain = $domain;
+        $domainId = $this->getRequest()->getParam('domain_id');
+        $domain   = pm_Domain::getByDomainId($domainId);
 
-        $form = new pm_Form_Simple();
+        $this->view->domain        = $domain;
+        $this->view->domainId      = $domainId;
+        $this->view->tenantId      = pm_Settings::get('domain_tenant_' . $domainId, '');
+        $this->view->callbackUrl   = $this->_getCallbackUrl();
+        $this->view->oauthStartUrl = pm_Context::getActionUrl('index', 'oauth-start') . '?domain_id=' . $domainId;
+        $this->view->globalReady   = !empty(pm_Settings::get('global_client_id', ''));
+    }
 
-        $form->addElement('text', 'tenant_id', [
-            'label'       => 'Azure Tenant ID',
-            'value'       => pm_Settings::get('domain_tenant_' . $domainId, ''),
-            'required'    => true,
-            'description' => 'z.B. xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx (Azure Portal → Entra ID → Übersicht)',
-        ]);
+    // ─── OAuth Start: Redirect zu Microsoft ──────────────────────────────────
 
-        $form->addElement('text', 'client_id', [
-            'label'       => 'App Client ID (Application ID)',
-            'value'       => pm_Settings::get('domain_client_' . $domainId, ''),
-            'required'    => true,
-            'description' => 'Azure Portal → App-Registrierungen → deine App → Anwendungs-ID',
-        ]);
+    // ─── Admin Consent Start: Redirect zu Microsoft ──────────────────────────
 
-        $form->addElement('password', 'client_secret', [
-            'label'       => 'Client Secret',
-            'value'       => pm_Settings::get('domain_secret_' . $domainId, ''),
-            'required'    => false,
-            'description' => 'Leer lassen um bestehenden Wert zu behalten',
-        ]);
+    public function oauthStartAction()
+    {
+        $domainId = $this->getRequest()->getParam('domain_id');
+        $clientId = pm_Settings::get('global_client_id', '');
 
-        $form->addControlButtons([
-            'sendTitle'  => 'Speichern & Verbinden',
-            'cancelLink' => pm_Context::getActionUrl('index', 'domains'),
-        ]);
-
-        if ($this->getRequest()->isPost() && $form->isValid($this->getRequest()->getPost())) {
-            pm_Settings::set('domain_tenant_' . $domainId, $form->getValue('tenant_id'));
-            pm_Settings::set('domain_client_' . $domainId, $form->getValue('client_id'));
-
-            $secret = $form->getValue('client_secret');
-            if (!empty($secret)) {
-                pm_Settings::set('domain_secret_' . $domainId, $secret);
-            }
-
-            // Verbindung testen
-            try {
-                $token = new Modules_O365ExitMigrator_O365TokenManager($domainId);
-                $token->getAccessToken();
-                $this->_status->addInfo('Verbindung zu Office 365 erfolgreich.');
-            } catch (Exception $e) {
-                $this->_status->addError('OAuth-Fehler: ' . $e->getMessage());
-            }
-
-            $this->_redirect('index/domains');
+        if (empty($clientId)) {
+            $this->_status->addError('Bitte zuerst die globale Client ID in den Einstellungen hinterlegen.');
+            $this->_redirect('index/settings');
+            return;
         }
 
-        $this->view->form = $form;
+        $state = base64_encode(json_encode([
+            'domain_id' => $domainId,
+            'nonce'     => bin2hex(random_bytes(16)),
+        ]));
+        pm_Settings::set('oauth_state_' . $domainId, $state);
+
+        // Authorization Code Flow: Customer-Admin meldet sich an.
+        // AppRoleAssignment.ReadWrite.All erlaubt uns danach im Callback,
+        // User.Read.All + Mail.Read programmatisch der App zuzuweisen.
+        $params = http_build_query([
+            'client_id'     => $clientId,
+            'response_type' => 'code',
+            'redirect_uri'  => $this->_getCallbackUrl(),
+            'scope'         => 'openid offline_access https://graph.microsoft.com/AppRoleAssignment.ReadWrite.All https://graph.microsoft.com/Application.Read.All',
+            'state'         => $state,
+            'prompt'        => 'consent',
+        ]);
+
+        $this->_helper->redirector->gotoUrl(
+            'https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize?' . $params
+        );
+    }
+
+    // ─── OAuth Callback: Token tauschen + App-Rollen automatisch zuweisen ────
+
+    public function oauthCallbackAction()
+    {
+        $code     = $this->getRequest()->getParam('code', '');
+        $state    = $this->getRequest()->getParam('state', '');
+        $error    = $this->getRequest()->getParam('error', '');
+        $errorMsg = $this->getRequest()->getParam('error_description', '');
+
+        if (!empty($error)) {
+            $this->_status->addError('Microsoft Fehler: ' . $errorMsg);
+            $this->_redirect('index/domains');
+            return;
+        }
+
+        $stateData = json_decode(base64_decode($state), true);
+        $domainId  = $stateData['domain_id'] ?? '';
+
+        if (empty($domainId) || pm_Settings::get('oauth_state_' . $domainId, '') !== $state) {
+            $this->_status->addError('Ungültiger OAuth-State. Bitte erneut versuchen.');
+            $this->_redirect('index/domains');
+            return;
+        }
+        pm_Settings::set('oauth_state_' . $domainId, '');
+
+        $clientId     = pm_Settings::get('global_client_id', '');
+        $clientSecret = pm_Settings::get('global_client_secret', '');
+
+        try {
+            // 1. Authorization Code gegen Access Token tauschen
+            $tokenData = $this->_exchangeCode($code, $clientId, $clientSecret);
+
+            // 2. Tenant ID aus JWT auslesen
+            $tenantId = $this->_getTenantFromJwt($tokenData['access_token']);
+            if (empty($tenantId)) {
+                throw new Exception('Tenant ID konnte nicht ermittelt werden.');
+            }
+
+            $token = $tokenData['access_token'];
+
+            // 3. Unseren Service Principal im Kunden-Tenant holen (wird beim Login automatisch erstellt)
+            $ourSpId = $this->_getServicePrincipalId($token, $clientId);
+
+            // 4. Microsoft Graph Service Principal im Kunden-Tenant holen
+            $graphSpId = $this->_getServicePrincipalId($token, '00000003-0000-0000-c000-000000000000');
+
+            // 5. App-Rollen zuweisen (ignoriert Fehler wenn bereits vorhanden)
+            $this->_assignAppRole($token, $ourSpId, $graphSpId, 'df021288-bdef-4463-88db-98f22de89214'); // User.Read.All
+            $this->_assignAppRole($token, $ourSpId, $graphSpId, '810c84a8-4a9e-49e6-bf7d-12d183f40d01'); // Mail.Read
+
+            pm_Settings::set('domain_tenant_' . $domainId, $tenantId);
+            $this->_status->addInfo('✓ Verbindung erfolgreich! Berechtigungen wurden automatisch erteilt.');
+
+        } catch (Exception $e) {
+            $this->_status->addError('Verbindungsfehler: ' . $e->getMessage());
+        }
+
+        $this->_redirect('index/connect?domain_id=' . $domainId);
+    }
+
+    private function _exchangeCode(string $code, string $clientId, string $clientSecret): array
+    {
+        $url = 'https://login.microsoftonline.com/organizations/oauth2/v2.0/token';
+        $ch  = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_POST           => true,
+            CURLOPT_POSTFIELDS     => http_build_query([
+                'grant_type'    => 'authorization_code',
+                'client_id'     => $clientId,
+                'client_secret' => $clientSecret,
+                'code'          => $code,
+                'redirect_uri'  => $this->_getCallbackUrl(),
+                'scope'         => 'openid offline_access https://graph.microsoft.com/AppRoleAssignment.ReadWrite.All',
+            ]),
+            CURLOPT_TIMEOUT        => 15,
+            CURLOPT_HTTPHEADER     => ['Content-Type: application/x-www-form-urlencoded'],
+        ]);
+        $response = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        $data = json_decode($response, true);
+        if ($httpCode !== 200 || empty($data['access_token'])) {
+            throw new Exception('Token-Fehler: ' . ($data['error_description'] ?? 'HTTP ' . $httpCode));
+        }
+        return $data;
+    }
+
+    private function _getTenantFromJwt(string $jwt): string
+    {
+        $parts = explode('.', $jwt);
+        if (count($parts) < 2) return '';
+        $payload = json_decode(base64_decode(str_pad(
+            $parts[1],
+            strlen($parts[1]) + (4 - strlen($parts[1]) % 4) % 4,
+            '='
+        )), true);
+        return $payload['tid'] ?? '';
+    }
+
+    private function _getServicePrincipalId(string $token, string $appId): string
+    {
+        $url = 'https://graph.microsoft.com/v1.0/servicePrincipals?$filter=' . rawurlencode("appId eq '$appId'") . '&$select=id';
+        $ch  = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT        => 15,
+            CURLOPT_HTTPHEADER     => ['Authorization: Bearer ' . $token, 'Accept: application/json'],
+        ]);
+        $response = curl_exec($ch);
+        curl_close($ch);
+
+        $data = json_decode($response, true);
+        $id   = $data['value'][0]['id'] ?? '';
+        if (empty($id)) {
+            throw new Exception('Service Principal nicht gefunden für App: ' . $appId);
+        }
+        return $id;
+    }
+
+    private function _assignAppRole(string $token, string $principalId, string $resourceId, string $appRoleId): void
+    {
+        $url  = 'https://graph.microsoft.com/v1.0/servicePrincipals/' . $principalId . '/appRoleAssignedTo';
+        $body = json_encode([
+            'principalId' => $principalId,
+            'resourceId'  => $resourceId,
+            'appRoleId'   => $appRoleId,
+        ]);
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_POST           => true,
+            CURLOPT_POSTFIELDS     => $body,
+            CURLOPT_TIMEOUT        => 15,
+            CURLOPT_HTTPHEADER     => [
+                'Authorization: Bearer ' . $token,
+                'Content-Type: application/json',
+                'Accept: application/json',
+            ],
+        ]);
+        $response = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        // 201 = erstellt, 409 = bereits vorhanden → beides OK
+        if ($httpCode !== 201 && $httpCode !== 409) {
+            $data = json_decode($response, true);
+            throw new Exception('AppRole-Zuweisung fehlgeschlagen (HTTP ' . $httpCode . '): ' . ($data['error']['message'] ?? $response));
+        }
+    }
+
+    private function _getCallbackUrl(): string
+    {
+        $host = $_SERVER['HTTP_HOST'] ?? 'localhost:8443';
+        return 'https://' . $host . '/modules/o365-exit-migrator/index.php/index/oauth-callback';
     }
 
     // ─── Postfächer einer Domain via Graph API laden ──────────────────────────
@@ -160,20 +326,11 @@ class IndexController extends pm_Controller_Action
         $dateFrom     = $this->getRequest()->getParam('date_from', '');
 
         try {
-            $token = new Modules_O365ExitMigrator_O365TokenManager($domainId);
-            $accessToken = $token->getAccessToken();
-
-            // Plesk-Passwort des Postfachs auslesen
-            $pleskPass = $this->_getPleskMailPassword($pleskEmail);
-            if (empty($pleskPass)) {
-                throw new Exception('Konnte Passwort für ' . $pleskEmail . ' nicht ermitteln.');
-            }
-
             $jobs   = new Modules_O365ExitMigrator_JobRepository();
             $jobId  = $jobs->create($domainId, $o365Email, $pleskEmail, $dateFrom);
 
-            $runner = new Modules_O365ExitMigrator_ImapsyncRunner();
-            $runner->start($jobId, $o365Email, $accessToken, $pleskEmail, $pleskPass, $dateFrom);
+            $runner = new Modules_O365ExitMigrator_GraphMigrationRunner();
+            $runner->start($jobId, (int)$domainId, $o365Email, $pleskEmail, $dateFrom);
 
             $jobs->setPid($jobId, $runner->getLastPid());
 
@@ -242,7 +399,8 @@ class IndexController extends pm_Controller_Action
             'status'      => ['title' => 'Status',         'noEscape' => true],
             'actions'     => ['title' => 'Log',            'noEscape' => true],
         ]);
-        $this->view->list = $list;
+        $this->view->list     = $list;
+        $this->view->jobCount = count($rows);
     }
 
     // ─── Job-Log anzeigen ─────────────────────────────────────────────────────
@@ -266,24 +424,18 @@ class IndexController extends pm_Controller_Action
 
         $form = new pm_Form_Simple();
 
-        $form->addElement('text', 'imapsync_path', [
-            'label'       => 'imapsync Pfad',
-            'value'       => pm_Settings::get('imapsync_path', '/usr/bin/imapsync'),
+        $form->addElement('text', 'global_client_id', [
+            'label'       => 'Azure App Client ID (global)',
+            'value'       => pm_Settings::get('global_client_id', ''),
             'required'    => true,
-            'description' => 'Absoluter Pfad zur imapsync-Binary',
+            'description' => 'Client ID der itSieber Multi-Tenant Azure App (einmalig registriert)',
         ]);
 
-        $form->addElement('text', 'imap_host', [
-            'label'       => 'Lokaler IMAP-Host',
-            'value'       => pm_Settings::get('imap_host', '127.0.0.1'),
-            'required'    => true,
-            'description' => 'Hostname/IP des Plesk-Mailservers',
-        ]);
-
-        $form->addElement('text', 'imap_port', [
-            'label'       => 'Lokaler IMAP-Port',
-            'value'       => pm_Settings::get('imap_port', '993'),
-            'required'    => true,
+        $form->addElement('password', 'global_client_secret', [
+            'label'       => 'Azure App Client Secret (global)',
+            'value'       => pm_Settings::get('global_client_secret', ''),
+            'required'    => false,
+            'description' => 'Leer lassen um bestehenden Wert zu behalten',
         ]);
 
         $form->addControlButtons([
@@ -292,14 +444,17 @@ class IndexController extends pm_Controller_Action
         ]);
 
         if ($this->getRequest()->isPost() && $form->isValid($this->getRequest()->getPost())) {
-            pm_Settings::set('imapsync_path', $form->getValue('imapsync_path'));
-            pm_Settings::set('imap_host',     $form->getValue('imap_host'));
-            pm_Settings::set('imap_port',     $form->getValue('imap_port'));
+            pm_Settings::set('global_client_id', $form->getValue('global_client_id'));
+            $secret = $form->getValue('global_client_secret');
+            if (!empty($secret)) {
+                pm_Settings::set('global_client_secret', $secret);
+            }
             $this->_status->addInfo('Einstellungen gespeichert.');
             $this->_helper->json(['redirect' => pm_Context::getActionUrl('index', 'settings')]);
         }
 
-        $this->view->form = $form;
+        $this->view->form         = $form;
+        $this->view->callbackUrl  = $this->_getCallbackUrl();
     }
 
     // ─── Tab: Update ──────────────────────────────────────────────────────────
@@ -327,12 +482,31 @@ class IndexController extends pm_Controller_Action
 
     private function _getTabs($active)
     {
-        return [
-            ['title' => 'Domains',      'action' => 'domains',  'active' => $active === 'domains'],
-            ['title' => 'Jobs',         'action' => 'jobs',     'active' => $active === 'jobs'],
-            ['title' => 'Einstellungen','action' => 'settings', 'active' => $active === 'settings'],
-            ['title' => 'Update',       'action' => 'update',   'active' => $active === 'update'],
+        $domId   = $this->getRequest()->getParam('dom_id', '');
+        $siteId  = $this->getRequest()->getParam('site_id', '');
+        $suffix  = !empty($domId) ? '?dom_id=' . urlencode($domId) . '&site_id=' . urlencode($siteId) : '';
+
+        $tabs = [
+            [
+                'title'  => 'Domains',
+                'action' => 'domains',
+                'active' => $active === 'domains',
+                'link'   => pm_Context::getActionUrl('index', 'domains') . $suffix,
+            ],
+            [
+                'title'  => 'Jobs',
+                'action' => 'jobs',
+                'active' => $active === 'jobs',
+                'link'   => pm_Context::getActionUrl('index', 'jobs') . $suffix,
+            ],
         ];
+
+        if (empty($domId)) {
+            $tabs[] = ['title' => 'Einstellungen', 'action' => 'settings', 'active' => $active === 'settings'];
+            $tabs[] = ['title' => 'Update',        'action' => 'update',   'active' => $active === 'update'];
+        }
+
+        return $tabs;
     }
 
     private function _getLocalMailboxes($domainName)
