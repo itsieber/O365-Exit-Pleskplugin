@@ -324,13 +324,14 @@ class IndexController extends pm_Controller_Action
         $o365Email    = $this->getRequest()->getParam('o365_email');
         $pleskEmail   = $this->getRequest()->getParam('plesk_email');
         $dateFrom     = $this->getRequest()->getParam('date_from', '');
+        $fullsync     = (bool)$this->getRequest()->getParam('fullsync', 0);
 
         try {
             $jobs   = new Modules_O365ExitMigrator_JobRepository();
-            $jobId  = $jobs->create($domainId, $o365Email, $pleskEmail, $dateFrom);
+            $jobId  = $jobs->create($domainId, $o365Email, $pleskEmail, $dateFrom, $fullsync);
 
             $runner = new Modules_O365ExitMigrator_GraphMigrationRunner();
-            $runner->start($jobId, (int)$domainId, $o365Email, $pleskEmail, $dateFrom);
+            $runner->start($jobId, (int)$domainId, $o365Email, $pleskEmail, $dateFrom, $fullsync);
 
             $jobs->setPid($jobId, $runner->getLastPid());
 
@@ -378,6 +379,14 @@ class IndexController extends pm_Controller_Action
                 default:        $badge = '<span style="color:#aaa">&#8212; ' . $job['status'] . '</span>';
             }
 
+            $stopUrl = pm_Context::getActionUrl('index', 'stop-job') . '?job_id=' . $job['id'];
+            $actions = '<a href="' . $logUrl . '" class="btn">Log</a>';
+            if ($job['status'] === 'running') {
+                $actions .= ' <a href="' . $stopUrl . '" class="btn btn-danger"
+                    onclick="return confirm(\'Job stoppen?\')"
+                    style="background:#c00;color:#fff;border-color:#c00">&#9632; Stop</a>';
+            }
+
             $rows[] = [
                 'id'         => $job['id'],
                 'o365_email' => $job['o365_email'],
@@ -385,7 +394,7 @@ class IndexController extends pm_Controller_Action
                 'date_from'  => $job['date_from'] ?: '—',
                 'started_at' => $job['started_at'],
                 'status'     => $badge,
-                'actions'    => '<a href="' . $logUrl . '" class="btn">Log</a>',
+                'actions'    => $actions,
             ];
         }
 
@@ -401,6 +410,30 @@ class IndexController extends pm_Controller_Action
         ]);
         $this->view->list     = $list;
         $this->view->jobCount = count($rows);
+    }
+
+    // ─── Job stoppen ──────────────────────────────────────────────────────────
+
+    public function stopJobAction()
+    {
+        $jobId = (int)$this->getRequest()->getParam('job_id');
+        $jobs  = new Modules_O365ExitMigrator_JobRepository();
+        $all   = $jobs->getAll();
+
+        foreach ($all as $job) {
+            if ((int)$job['id'] === $jobId && $job['status'] === 'running') {
+                $pid = (int)$job['pid'];
+                if ($pid > 0) {
+                    // Prozessgruppe beenden
+                    shell_exec('kill ' . $pid . ' 2>/dev/null');
+                }
+                $jobs->finish($jobId, 'error');
+                $this->_status->addInfo('Job #' . $jobId . ' gestoppt.');
+                break;
+            }
+        }
+
+        $this->_redirect('index/jobs');
     }
 
     // ─── Job-Log anzeigen ─────────────────────────────────────────────────────
@@ -517,7 +550,10 @@ class IndexController extends pm_Controller_Action
 <packet>
     <mail>
         <get_info>
-            <filter/>
+            <filter>
+                <domain-name>{$domainName}</domain-name>
+            </filter>
+            <mailbox/>
         </get_info>
     </mail>
 </packet>
@@ -525,14 +561,29 @@ XML;
             $response = pm_ApiRpc::getService()->call($request);
             if (isset($response->mail->get_info->result)) {
                 foreach ($response->mail->get_info->result as $result) {
-                    if (isset($result->mailname)) {
-                        $addr = (string)$result->mailname . '@' . $domainName;
-                        $mailboxes[$addr] = $addr;
-                    }
+                    if ((string)($result->status ?? '') !== 'ok') continue;
+                    $mailname = (string)($result->mailname ?? '');
+                    if (empty($mailname)) continue;
+                    $addr = $mailname . '@' . $domainName;
+                    $mailboxes[$addr] = $addr;
                 }
             }
         } catch (Exception $e) {
-            // ignore
+            // ignore RPC error, fall through to CLI
+        }
+
+        if (empty($mailboxes)) {
+            // Fallback: plesk CLI
+            $out = shell_exec('plesk bin mail -l 2>/dev/null');
+            foreach (explode("\n", trim((string)$out)) as $line) {
+                // Format: "Mail name\tuser@domain.tld"
+                if (strpos($line, 'Mail name') === false) continue;
+                $parts = explode("\t", $line);
+                $addr  = trim($parts[1] ?? '');
+                if (empty($addr) || strpos($addr, '@') === false) continue;
+                if (strtolower(substr($addr, strpos($addr, '@') + 1)) !== strtolower($domainName)) continue;
+                $mailboxes[$addr] = $addr;
+            }
         }
         return $mailboxes;
     }

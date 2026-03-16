@@ -31,9 +31,19 @@ class Modules_O365ExitMigrator_JobRepository
                 finished_at TEXT
             )
         ");
+        $this->pdo->exec("
+            CREATE TABLE IF NOT EXISTS synced_folders (
+                o365_email     TEXT NOT NULL,
+                folder_id      TEXT NOT NULL,
+                folder_name    TEXT NOT NULL,
+                synced_at      TEXT NOT NULL,
+                message_count  INTEGER DEFAULT 0,
+                PRIMARY KEY (o365_email, folder_id)
+            )
+        ");
     }
 
-    public function create(string $domainId, string $o365Email, string $pleskEmail, string $dateFrom): int
+    public function create(string $domainId, string $o365Email, string $pleskEmail, string $dateFrom, bool $fullsync = false): int
     {
         $stmt = $this->pdo->prepare("
             INSERT INTO jobs (domain_id, o365_email, plesk_email, date_from, started_at)
@@ -47,6 +57,18 @@ class Modules_O365ExitMigrator_JobRepository
             ':started_at'  => date('Y-m-d H:i:s'),
         ]);
         return (int)$this->pdo->lastInsertId();
+    }
+
+    public function getSyncedFolders(string $o365Email): array
+    {
+        $stmt = $this->pdo->prepare("SELECT folder_id, folder_name, synced_at, message_count FROM synced_folders WHERE o365_email = :email");
+        $stmt->execute([':email' => $o365Email]);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $result = [];
+        foreach ($rows as $row) {
+            $result[$row['folder_id']] = $row;
+        }
+        return $result;
     }
 
     public function setPid(int $jobId, int $pid)

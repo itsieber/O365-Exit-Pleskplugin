@@ -13,7 +13,8 @@ class Modules_O365ExitMigrator_GraphMigrationRunner
         int    $domainId,
         string $o365Email,
         string $pleskEmail,
-        string $dateFrom
+        string $dateFrom,
+        bool   $fullsync = false
     ) {
         $tenantId     = pm_Settings::get('domain_tenant_' . $domainId, '');
         $clientId     = pm_Settings::get('global_client_id', '');
@@ -35,16 +36,19 @@ class Modules_O365ExitMigrator_GraphMigrationRunner
         ]));
         chmod($credsFile, 0600);
 
+        $dbFile = pm_Context::getVarDir() . 'jobs.sqlite';
         $args = implode(' ', [
             escapeshellarg($credsFile),
             escapeshellarg($o365Email),
             escapeshellarg($pleskEmail),
             escapeshellarg($logFile),
-            !empty($dateFrom) ? escapeshellarg($dateFrom) : '',
+            escapeshellarg($dbFile),
+            !empty($dateFrom) ? escapeshellarg($dateFrom) : "''",
+            $fullsync ? '1' : '0',
         ]);
 
         $cmd = 'nohup php ' . escapeshellarg($script) . ' ' . $args
-             . ' > /dev/null 2>&1 & echo $!';
+             . ' >> ' . escapeshellarg($logFile) . ' 2>&1 & echo $!';
 
         $pid = (int)shell_exec($cmd);
         $this->lastPid = $pid;
